@@ -1,0 +1,205 @@
+from datetime import datetime
+import logging
+
+from odoo import http, tools, fields
+from odoo.http import request, Response
+from odoo.exceptions import AccessDenied, UserError, ValidationError
+from odoo.tests import get_db_name
+import xmlrpc.client
+
+_logger = logging.getLogger(__name__)
+
+class PartnerController(http.Controller):
+
+    @http.route('/api/tasks', auth='none', methods=['GET'], type='json')
+    def get_partners(self, **kwargs):
+        try:
+            # Get the API key from the Authorization header
+            api_key = request.httprequest.headers.get('Authorization')
+            if not api_key:
+                _logger.warning("DOOTIX DEBUG %r", "No API key provided")
+                return {'status': 'error', 'message': "No API key provided", 'code': 401}
+
+            user_id = request.env["res.users.apikeys"]._check_credentials(
+                scope='rpc', key=api_key
+            )
+
+            if not user_id:
+                _logger.warning("DOOTIX DEBUG %r", "API key problem")
+                return {'status': 'error', 'message': "API key problem", 'code': 403}
+
+            # Fetching all tasks
+            tasks = request.env['project.task'].sudo().search([])
+            data = []
+            for task in tasks:
+                if task.project_id:
+                    task_description = tools.html2plaintext(task.description or "")
+                    project_description = tools.html2plaintext(
+                        task.project_id.description or "") if task.project_id else None
+
+                    partner = task.project_id.partner_id
+
+                    client_object = None
+                    if partner:
+                        if partner.is_company:
+                            company_name = partner.name
+                            company_id = partner.id
+
+                            client_object = {
+                                'odoo_id': None,
+                                'client_name': None,
+                                'odoo_company_id': company_id,
+                                'company_name': company_name,
+                            }
+                        else:
+                            client_name = partner.name
+
+                            # Retrieve the company associated with the contact
+                            company = partner.parent_id
+
+                            client_object = {
+                                'odoo_id': partner.id if partner else None,
+                                'client_name': client_name,
+                                'odoo_company_id': company.id if company else None,
+                                'company_name': company.name if company else None,
+                            }
+
+                    data.append({
+                        'odoo_id': task.id,
+                        'name': task.name,
+                        'description': task_description,
+                        'status': task.state,
+                        'allocated_time': getattr(task, 'allocated_hours', 0),
+
+                        # Adding Project Information
+                        'project': {
+                            'odoo_id': task.project_id.id if task.project_id else None,
+                            'name': task.project_id.name if task.project_id else None,
+                            'description': project_description,
+                        },
+                        'client': client_object,
+                    })
+            return {'status': 'success', 'tasks': data, 'code': 200}
+        except AccessDenied as e:
+            _logger.warning("DOOTIX DEBUG %r", str(e))
+            return {'status': 'error', 'message': str(e), 'code': 403}
+        except Exception as e:
+            _logger.warning("DOOTIX DEBUG %r", str(e))
+            return {'status': 'error', 'message': str(e), 'code': 500}
+
+    @http.route('/api/timesheets', auth='none', methods=['POST'], type='json')
+    def create_timesheets(self, **kwargs):
+        base_url = request.env['ir.config_parameter'].sudo().get_param('web.base.url')
+        database = get_db_name()
+
+        # Extract the 'name' parameter from the JSON payload
+        data = request.httprequest.get_json()
+        # Obtain values from your request body
+        timesheets = data.get('timesheets')
+        if not timesheets:
+            _logger.warning("DOOTIX DEBUG %r", "Missing parameter: timesheets")
+            return {'status': 'error', 'message': "Missing parameter: timesheets", 'code': 404}
+
+        try:
+            # Get the API key from the Authorization header
+            api_key = request.httprequest.headers.get('Authorization')
+            if not api_key:
+                _logger.warning("DOOTIX DEBUG %r", "No API key provided")
+                return {'status': 'error', 'message': "No API key provided", 'code': 401}
+
+            user_id = request.env["res.users.apikeys"]._check_credentials(
+                scope='rpc', key=api_key
+            )
+
+            if not user_id:
+                _logger.warning("DOOTIX DEBUG %r", "API key problem")
+                return {'status': 'error', 'message': "API key problem", 'code': 403}
+
+            common = xmlrpc.client.ServerProxy('{}/xmlrpc/2/object'.format(base_url))
+
+            for timesheet in timesheets:
+                email = timesheet.get('employee').get('email')
+                coclock_instance_id = timesheet.get('coclock_instance_id')
+                description = timesheet.get('description')
+                duration = timesheet.get('duration') / 60
+                project_id = timesheet.get('project_id')
+                task_id = timesheet.get('task_id')
+                date_obj = datetime.strptime(timesheet.get('start_time'), "%Y-%m-%d")
+
+                # Search for the employee using their email
+                employee = request.env['hr.employee'].sudo().search([('work_email', '=', email), ('active', '=', True)], limit=1)
+
+                # Check if employee exists and is active
+                if not employee:
+                    firstname = timesheet.get('employee').get('firstname')
+                    lastname = timesheet.get('employee').get('lastname')
+
+                    # Step 1: Create a new user
+                    user_vals = {
+                        'name': firstname + ' ' + lastname,
+                        'login': email,  # Email as login
+                        'email': email,
+                    }
+                    new_user = common.execute_kw(database, user_id, api_key, 'res.users', 'create', [user_vals])
+
+                    # Step 2: Create an employee and link the user
+                    employee_vals = {
+                        'name': firstname + ' ' + lastname,
+                        'job_id': 1,  # Assuming job position with ID 1 exists
+                        'work_email': email,
+                        'user_id': new_user,  # Link the employee to the newly created user
+                    }
+                    employee_id = common.execute_kw(database, user_id, api_key, 'hr.employee', 'create',
+                                                    [employee_vals])
+
+                    # Step 2: Get the employee record using browse()
+                    employee = common.execute_kw(database, user_id, api_key, 'hr.employee', 'read',
+                                                        [[employee_id]])
+
+                    # Now, access the user_id field from the employee record
+                    if employee:
+                        uid = employee[0].get('user_id', False)[0]
+                else:
+                    uid = employee.user_id
+
+                if not employee or not uid:
+                    _logger.warning("DOOTIX DEBUG %r", "No active employee found with the given email.")
+                    return {'status': 'error', 'message': "No active employee found with the given email.", 'code': 404}
+
+                account_analytic_line = request.env['account.analytic.line'].sudo().search([('coclock_instance_id', '=', coclock_instance_id)],
+                                                                    limit=1)
+                if not account_analytic_line:
+                    # Create the timesheet entry
+                    timesheet = common.execute_kw(database, user_id, api_key, 'account.analytic.line', 'create',
+                                                  [{
+                                                      'name': description,
+                                                      'user_id': uid.id,
+                                                      'date': date_obj,
+                                                      'unit_amount': duration,
+                                                      'project_id': project_id,
+                                                      'task_id': task_id,
+                                                      'coclock_instance_id': coclock_instance_id,
+                                                  }])
+                else:
+                    # Update the timesheet entry
+                    timesheet_update = common.execute_kw(database, user_id, api_key, 'account.analytic.line', 'write',
+                                                  [[account_analytic_line.id],  # The ID of the timesheet to update
+                                                   {
+                                                       'name': description,
+                                                       'user_id': uid.id,
+                                                       'date': date_obj,
+                                                       'unit_amount': duration,
+                                                       'project_id': project_id,
+                                                       'task_id': task_id,
+                                                       'coclock_instance_id': coclock_instance_id,
+                                                   }])
+
+                    timesheet = account_analytic_line.id
+
+            return {'status': 'success', 'timesheets': timesheet, 'code': 200}
+        except AccessDenied as e:
+            _logger.warning("DOOTIX DEBUG %r", str(e))
+            return {'status': 'error', 'message': str(e), 'code': 403}
+        except Exception as e:
+            _logger.warning("DOOTIX DEBUG %r", str(e))
+            return {'status': 'error', 'message': str(e), 'code': 500}
