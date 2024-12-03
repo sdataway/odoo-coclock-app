@@ -131,41 +131,9 @@ class PartnerController(http.Controller):
 
                 # Check if employee exists and is active
                 if not employee:
-                    firstname = timesheet.get('employee').get('firstname')
-                    lastname = timesheet.get('employee').get('lastname')
-
-                    # Step 1: Create a new user
-                    user_vals = {
-                        'name': firstname + ' ' + lastname,
-                        'login': email,  # Email as login
-                        'email': email,
-                    }
-                    new_user = common.execute_kw(database, user_id, api_key, 'res.users', 'create', [user_vals])
-
-                    # Step 2: Create an employee and link the user
-                    employee_vals = {
-                        'name': firstname + ' ' + lastname,
-                        'job_id': 1,  # Assuming job position with ID 1 exists
-                        'work_email': email,
-                        'user_id': new_user,  # Link the employee to the newly created user
-                    }
-                    employee_id = common.execute_kw(database, user_id, api_key, 'hr.employee', 'create',
-                                                    [employee_vals])
-
-                    # Step 2: Get the employee record using browse()
-                    employee = common.execute_kw(database, user_id, api_key, 'hr.employee', 'read',
-                                                        [[employee_id]])
-
-                    # Now, access the user_id field from the employee record
-                    if employee:
-                        uid = employee[0].get('user_id', False)[0]
-                else:
-                    uid = employee.user_id
-
-                if not employee or not uid:
-                    _logger.warning("DOOTIX DEBUG %r", "No active employee found with the given email.")
-                    return {'status': 'error', 'message': "No active employee found with the given email.", 'code': 404}
-
+					_logger.warning("DOOTIX DEBUG %r", "No employee found with the given email.")
+                    return {'status': 'error', 'message': "No employee found with the given email, please create the employee in Odoo before attempting a synchronisation", 'code': 404}
+				               
                 account_analytic_line = request.env['account.analytic.line'].sudo().search([('coclock_instance_id', '=', coclock_instance_id)],
                                                                     limit=1)
                 if not account_analytic_line:
@@ -173,7 +141,7 @@ class PartnerController(http.Controller):
                     timesheet = common.execute_kw(database, user_id, api_key, 'account.analytic.line', 'create',
                                                   [{
                                                       'name': description,
-                                                      'user_id': uid.id,
+                                                      'employee_id': employee.id,
                                                       'date': date_obj,
                                                       'unit_amount': duration,
                                                       'project_id': project_id,
@@ -186,7 +154,7 @@ class PartnerController(http.Controller):
                                                   [[account_analytic_line.id],  # The ID of the timesheet to update
                                                    {
                                                        'name': description,
-                                                       'user_id': uid.id,
+                                                       'employee_id': employee.id,
                                                        'date': date_obj,
                                                        'unit_amount': duration,
                                                        'project_id': project_id,
