@@ -6,6 +6,8 @@
     "data": [
 
     ],
+    "author": "SDATAWAY SA",
+    "website": "https://github.com/sdataway/odoo-coclock-app",
     "installable": True,
     'license': 'LGPL-3',
 }
