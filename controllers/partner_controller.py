@@ -131,9 +131,9 @@ class PartnerController(http.Controller):
 
                 # Check if employee exists and is active
                 if not employee:
-					_logger.warning("DOOTIX DEBUG %r", "No employee found with the given email.")
+                    _logger.warning("DOOTIX DEBUG %r", "No employee found with the given email.")
                     return {'status': 'error', 'message': "No employee found with the given email, please create the employee in Odoo before attempting a synchronisation", 'code': 404}
-				               
+                               
                 account_analytic_line = request.env['account.analytic.line'].sudo().search([('coclock_instance_id', '=', coclock_instance_id)],
                                                                     limit=1)
                 if not account_analytic_line:
