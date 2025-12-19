@@ -27,9 +27,18 @@ class PartnerController(http.Controller):
             if not user_id:
                 _logger.warning("DOOTIX DEBUG %r", "API key problem")
                 return {'status': 'error', 'message': "API key problem", 'code': 403}
+            
+            # Convert int -> res.users record
+            user = request.env['res.users'].sudo().browse(user_id)
+            
+            # Defensive: ensure record exists
+            if not user.exists():
+                return {'status': 'error', 'message': "API User not found", 'code': 404}
+
+            company_id = user.company_id.id  # numeric company ID
 
             # Fetching all tasks
-            tasks = request.env['project.task'].sudo().search([("company_id", "in", [user_id.company_id])])
+            tasks = request.env['project.task'].sudo().search([("company_id", "=", company_id)])
             data = []
             for task in tasks:
                 if task.project_id:
