@@ -7,6 +7,10 @@ A valid subscription to co'clock is required in order to get benefit from this a
 
 # Change Log
 
+**v1.3.0 (19.12.2025)**
+- Filter tasks by company_id that the API user belongs to
+
+
 **v1.2.0 (11.02.2025)**
 - Remove constraint to have a User associated to an employee in order to post timesheets
 
