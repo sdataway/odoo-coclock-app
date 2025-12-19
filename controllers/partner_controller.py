@@ -29,7 +29,7 @@ class PartnerController(http.Controller):
                 return {'status': 'error', 'message': "API key problem", 'code': 403}
 
             # Fetching all tasks
-            tasks = request.env['project.task'].sudo().search([])
+            tasks = request.env['project.task'].sudo().search([("company_id", "in", [user_id.company_id])])
             data = []
             for task in tasks:
                 if task.project_id:
